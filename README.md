@@ -8,12 +8,13 @@
 
 PathDeck is a native macOS file manager built with **Swift and AppKit**. Type a path, jump to a folder, and get back to your work. It brings an editable address bar, useful context menus, and familiar Windows file controls to the Mac, with native tabs, Quick Look, and light and dark appearances.
 
-![PathDeck browsing a sample project workspace in light appearance](docs/images/showcase/overview-light.png)
+![PathDeck displaying image thumbnails in its tile view](docs/images/showcase/tiles-light.png)
 
 *Screenshots show the actual AppKit interface with sample files. The app interface is currently in Simplified Chinese.*
 
 ## Features
 
+- **Browse images at a glance.** The default tile view shows image thumbnails alongside folders and file icons. Switch to the details list whenever you need columns, dates, or sizes. Each tab remembers its view.
 - **Go straight to a path.** Switch between breadcrumbs and an editable address bar. Use absolute paths, `~`, relative paths, or local `file://` URLs. Enter a file path to open its parent folder and select the file.
 - **Keep folders within reach.** Browse the directory tree, pin favorite folders, rename their display labels, and reorder them. Filter the current folder by name without starting a recursive search.
 - **Use familiar file controls.** Create folders and text files, rename inline, copy, cut, paste, or move items to Trash. Open a folder in Terminal or files in VS Code from the context menu.
@@ -23,6 +24,12 @@ PathDeck is a native macOS file manager built with **Swift and AppKit**. Type a 
 - **Stay native.** Press Space for Quick Look, inspect file properties, use keyboard navigation, and choose a comfortable list density. Folder changes refresh automatically.
 
 ## A closer look
+
+### A grid for images, a list for details
+
+Use the view switch beside the filter box, or press `⌘1` for tiles and `⌘2` for details. Thumbnails load in the background as images become visible; large photos are decoded to preview size.
+
+![PathDeck's details list with the view switch beside the filter box](docs/images/showcase/overview-light.png)
 
 ### Paths you can see and edit
 
@@ -50,7 +57,7 @@ Rename a file where it is listed, inspect its path and permissions, or open it i
 
 PathDeck follows the system appearance and keeps standard selection, focus, scrolling, and text editing behavior.
 
-![PathDeck showing the same sample workspace in dark appearance](docs/images/showcase/overview-dark.png)
+![PathDeck displaying the image gallery in dark appearance](docs/images/showcase/tiles-dark.png)
 
 ## Build and run
 
@@ -71,6 +78,7 @@ Prefer Xcode? Open `PathDeck.xcodeproj`, select the **PathDeck** scheme and **My
 
 | Action | Mac | Windows controls in the file list |
 | --- | --- | --- |
+| Tiles / details | `⌘1` / `⌘2` | View switch |
 | Edit the path | `⌘L` | `Ctrl+L` / `Alt+D` |
 | Copy / cut / paste | `⌘C` / `⌘X` / `⌘V` | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` |
 | Undo | `⌘Z` | `Ctrl+Z` |
@@ -113,4 +121,4 @@ python3 scripts/generate-project.py --check
 
 To regenerate the product screenshots from the real AppKit views, run `python3 scripts/capture-readme.py` in a graphical macOS session. It uses a temporary sample workspace and private settings.
 
-See the [product specification](SPEC.md), [design decisions](docs/decisions.md), and [validation notes](docs/continuity-validation.md) for implementation details. These documents are primarily in Chinese. Issues and focused pull requests are welcome; include reproduction steps for bugs and the validation relevant to a change.
+See the [product specification](SPEC.md), [design decisions](docs/decisions.md), and [validation notes](docs/tiles-validation.md) for implementation details. These documents are primarily in Chinese. Issues and focused pull requests are welcome; include reproduction steps for bugs and the validation relevant to a change.

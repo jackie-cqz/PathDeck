@@ -29,6 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             let url = RuntimeContext.testPreferencesURL ?? self.smokeFixture?.appendingPathComponent(".settings/preferences.json") ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("PathDeck/preferences.json")
             let preferences = PreferencesController(store: PreferencesStore(url: url))
             await preferences.load(migrateLegacy: !RuntimeContext.isTesting)
+            // The existing regression suite deliberately exercises the details presentation.
+            // TileCheck explicitly selects tiles and tests the new presentation separately.
+            if RuntimeContext.isTesting, preferences.value.fileViewMode == nil { preferences.value.fileViewMode = .details }
             self.preferences = preferences
             let startupWorkspace = preferences.value.workspace
             if let workspace = startupWorkspace, !workspace.groups.isEmpty {
@@ -36,6 +39,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             } else { self.showMainWindow() }
             self.workspaceTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in Task { @MainActor [weak self] in self?.captureWorkspace() } }
             NSApplication.shared.activate()
+            if CommandLine.arguments.contains("--tile-test"), let browser = self.browser, let root = self.smokeFixture {
+                await browser.waitForNavigation()
+                let checks = await TileCheck.run(browser: browser, fixture: root), passed = checks.values.allSatisfy { $0 }
+                if let data = try? JSONSerialization.data(withJSONObject: ["passed": passed, "checks": checks], options: [.prettyPrinted, .sortedKeys]) { print(String(decoding: data, as: UTF8.self)) }
+                browser.stopMonitoring(); await preferences.flush(); try? FileManager.default.removeItem(at: root)
+                fflush(stdout); exit(passed ? 0 : 1)
+            }
             if CommandLine.arguments.contains("--workspace-save-test"), let root = self.smokeFixture {
                 let checks = await WorkspaceRestartCheck.prepare(app: self, root: root)
                 let passed = checks.values.allSatisfy { $0 }
@@ -109,6 +119,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
     @objc func editLocation(_ sender: Any?) { browser?.editLocation(sender) }
     @objc func focusFilter(_ sender: Any?) { browser?.focusFilter(sender) }
+    @objc func showTiles(_ sender: Any?) { browser?.showTiles(sender) }
+    @objc func showDetails(_ sender: Any?) { browser?.showDetails(sender) }
     @objc func openCurrentTerminal(_ sender: Any?) { browser?.openCurrentTerminal(sender) }
     @objc func goBack(_ sender: Any?) { browser?.goBack(sender) }
     @objc func goForward(_ sender: Any?) { browser?.goForward(sender) }

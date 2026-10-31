@@ -9,8 +9,10 @@ public struct BrowserPageSnapshot: Codable, Equatable, Sendable {
     public var showHidden: Bool
     public var columns: [ColumnPreference]
     public var sidebarWidth: Double
-    public init(directory: String, selection: [FileReference] = [], anchor: FileReference? = nil, filter: String = "", sort: FileSort = FileSort(), showHidden: Bool = false, columns: [ColumnPreference] = AppPreferences().columns, sidebarWidth: Double = 240) {
+    public var fileViewMode: FileViewMode?
+    public init(directory: String, selection: [FileReference] = [], anchor: FileReference? = nil, filter: String = "", sort: FileSort = FileSort(), showHidden: Bool = false, columns: [ColumnPreference] = AppPreferences().columns, sidebarWidth: Double = 240, fileViewMode: FileViewMode? = nil) {
         self.directory = directory; self.selection = selection; self.anchor = anchor; self.filter = filter; self.sort = sort; self.showHidden = showHidden; self.columns = columns; self.sidebarWidth = sidebarWidth
+        self.fileViewMode = fileViewMode
     }
     public func sanitized() -> Self? {
         guard directory.hasPrefix("/"), !directory.contains("\0") else { return nil }

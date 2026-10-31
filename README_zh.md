@@ -8,12 +8,13 @@
 
 PathDeck 是一款使用 **Swift + AppKit** 构建的 macOS 原生文件管理器。输入路径、跳转目录，继续手头的工作。它把可编辑的地址栏、常用右键操作和熟悉的 Windows 文件操作习惯带到 Mac，同时保留原生标签页、快速预览和浅色、深色外观。
 
-![PathDeck 在浅色模式下浏览示例项目工作区](docs/images/showcase/overview-light.png)
+![PathDeck 在平铺模式下显示图片缩略图](docs/images/showcase/tiles-light.png)
 
 *图片来自实际运行的 AppKit 界面，使用示例文件。应用界面目前为简体中文。*
 
 ## 功能
 
+- **看图不用逐个打开。** 默认平铺显示图片缩略图、文件夹和文件图标；需要查看日期、大小等列信息时，可切回详情列表。每个标签分别记住显示方式。
 - **输入路径，直接到达。** 在面包屑与路径输入之间切换，支持绝对路径、`~`、相对路径和本地 `file://` 地址。输入文件路径，会定位到父目录并选中文件。
 - **让常用目录随手可达。** 目录树按需展开；常用目录可固定、设置显示别名和调整顺序。按名称过滤当前目录，快速缩小眼前的文件范围。
 - **使用熟悉的文件操作。** 新建文件夹或文本、内联重命名、复制、剪切粘贴和移入废纸篓。右键即可在终端中打开目录，或用 VS Code 打开文件。
@@ -23,6 +24,12 @@ PathDeck 是一款使用 **Swift + AppKit** 构建的 macOS 原生文件管理�
 - **保留 Mac 的原生体验。** 空格快速预览、查看文件属性、键盘导航和列表密度切换；目录变化自动刷新，浅色、深色随系统切换。
 
 ## 界面一览
+
+### 看图片用平铺，查信息用列表
+
+点击过滤框旁的视图按钮切换，也可按 `⌘1` 显示平铺、`⌘2` 显示详情。缩略图随可见区域在后台加载，大图按预览尺寸解码。
+
+![PathDeck 详情列表，过滤框旁可切换视图](docs/images/showcase/overview-light.png)
 
 ### 路径看得见，也能直接输入
 
@@ -50,7 +57,7 @@ PathDeck 是一款使用 **Swift + AppKit** 构建的 macOS 原生文件管理�
 
 外观跟随系统，选择、焦点、滚动和文本编辑沿用原生控件的行为。
 
-![PathDeck 在深色模式下显示同一个示例工作区](docs/images/showcase/overview-dark.png)
+![PathDeck 在深色模式下显示图片平铺视图](docs/images/showcase/tiles-dark.png)
 
 ## 构建与使用
 
@@ -71,6 +78,7 @@ open build/release/PathDeck.app
 
 | 动作 | Mac | Windows 操作习惯下的文件列表 |
 | --- | --- | --- |
+| 平铺 / 详情 | `⌘1` / `⌘2` | 点击视图切换按钮 |
 | 输入路径 | `⌘L` | `Ctrl+L` / `Alt+D` |
 | 复制 / 剪切 / 粘贴 | `⌘C` / `⌘X` / `⌘V` | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` |
 | 撤销 | `⌘Z` | `Ctrl+Z` |
@@ -113,4 +121,4 @@ python3 scripts/generate-project.py --check
 
 在 macOS 图形登录会话下运行 `python3 scripts/capture-readme.py`，可从实际 AppKit 界面重新生成产品截图；工具使用临时示例目录与私有设置。
 
-实现细节见 [产品规格](SPEC.md)、[设计决策](docs/decisions.md) 和 [验证说明](docs/continuity-validation.md)。欢迎提交 Issue 或聚焦单一改动的 Pull Request；报告问题时请附复现步骤，修改代码时请说明相关验证。
+实现细节见 [产品规格](SPEC.md)、[设计决策](docs/decisions.md) 和 [验证说明](docs/tiles-validation.md)。欢迎提交 Issue 或聚焦单一改动的 Pull Request；报告问题时请附复现步骤，修改代码时请说明相关验证。

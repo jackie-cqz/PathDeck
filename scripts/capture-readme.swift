@@ -22,9 +22,18 @@ private final class ReadmeCapture: NSObject, NSApplicationDelegate {
         for name in ["Archive", "Assets", "Documents", "Examples", "Screenshots"] { try fm.createDirectory(at: projects.appendingPathComponent(name), withIntermediateDirectories: true) }
         let files = ["README.md": "# PathDeck\nA native file manager for macOS.\n", "Package.swift": "// A sample Swift package manifest.\n", "Design notes.md": "# Design notes\nClear paths. Familiar controls.\n", "Getting started.txt": "Press Command-L to enter a folder path.\n", "Project brief.md": "# Project brief\nA small workspace for screenshot examples.\n", "Release checklist.md": "# Release checklist\nReview files before moving them.\n", "meeting-notes.txt": "Sample notes for this demonstration workspace.\n", "tasks.csv": "Task,Status\nReview screenshots,Done\nUpdate documentation,Done\n"]
         for (name, contents) in files { try Data(contents.utf8).write(to: projects.appendingPathComponent(name)) }
+        let images = projects.appendingPathComponent("Images", isDirectory: true)
+        try fm.createDirectory(at: images, withIntermediateDirectories: true)
+        try TileCheck.makeImage(at: images.appendingPathComponent("Landscape.png"))
+        try TileCheck.makeImage(at: images.appendingPathComponent("Portrait.png"), width: 600, height: 1000)
+        try TileCheck.makeImage(at: images.appendingPathComponent("Panorama.png"), width: 1800, height: 600)
+        let project = URL(fileURLWithPath: output).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        try fm.copyItem(at: project.appendingPathComponent("assets/branding/PathDeck-master.png"), to: images.appendingPathComponent("App Icon.png"))
         let preferences = PreferencesController(store: PreferencesStore(url: fixture.appendingPathComponent("settings.json")))
         preferences.value.favorites = [workspace.path, projects.path, projects.appendingPathComponent("Documents").path, projects.appendingPathComponent("Assets").path]
         preferences.value.favoriteNames = [workspace.path: "Workspace", projects.path: "Projects", projects.appendingPathComponent("Documents").path: "Documents", projects.appendingPathComponent("Assets").path: "Assets"]
+        preferences.value.fileViewMode = .tiles
+        preferences.value.favorites?.append(images.path); preferences.value.favoriteNames?[images.path] = "Images"
         let context = FileActionContext()
         let main = MainWindowController(session: BrowserSession(initialDirectory: projects), preferences: preferences, actionContext: context)
         windows.append(main); main.showWindow(nil); main.window?.makeKeyAndOrderFront(nil); main.window?.makeMain()
@@ -33,6 +42,11 @@ private final class ReadmeCapture: NSObject, NSApplicationDelegate {
         guard let window = main.window else { throw CocoaError(.fileReadUnknown) }
         window.setContentSize(NSSize(width: 1100, height: 650))
         _ = await ReliabilityCheck.eventually { window.isKeyWindow }
+        main.browser.navigate(to: images); await main.browser.waitForNavigation()
+        _ = await ReliabilityCheck.eventually { main.browser.fileList.grid.collection.visibleItems().compactMap { $0 as? FileTileItem }.filter(\.hasThumbnail).count == 4 }
+        try await export(window, name: "tiles-light", appearance: .aqua, to: outputDirectory)
+        try await export(window, name: "tiles-dark", appearance: .darkAqua, to: outputDirectory)
+        main.browser.navigate(to: projects); await main.browser.waitForNavigation(); main.browser.changeViewMode(.details)
         main.browser.fileList.focus()
         try await export(window, name: "overview-light", appearance: .aqua, to: outputDirectory)
         try await export(window, name: "overview-dark", appearance: .darkAqua, to: outputDirectory)
@@ -59,7 +73,7 @@ private final class ReadmeCapture: NSObject, NSApplicationDelegate {
         properties.window?.close()
         for controller in windows { controller.browser.stopMonitoring(); controller.window?.close() }
         await preferences.flush()
-        print("Exported six native AppKit screenshots to \(outputDirectory.path)")
+        print("Exported eight native AppKit screenshots to \(outputDirectory.path)")
     }
     private func export(_ window: NSWindow, name: String, appearance: NSAppearance.Name, to directory: URL) async throws {
         // Selection vibrancy is composed outside cacheDisplay; leave the tree unselected.

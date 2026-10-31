@@ -7,6 +7,16 @@ import Testing
 #endif
 
 @Suite struct WorkspaceTests {
+    @Test func viewModesPreserveLegacySettingsAndPerPageChoices() throws {
+        let legacy = try JSONDecoder().decode(AppPreferences.self, from: Data("{\"schemaVersion\":1,\"sidebarWidth\":240,\"columns\":[],\"sort\":{\"column\":\"name\",\"ascending\":true},\"showHidden\":false,\"windowsFriendly\":true,\"expandedDirectories\":[],\"recentDirectories\":[]}".utf8))
+        #expect(legacy.fileViewMode == nil)
+        var preferences = legacy
+        preferences.fileViewMode = .tiles
+        preferences.workspace = .init(groups: [.init(pages: [.init(directory: "/images", fileViewMode: .tiles), .init(directory: "/documents", fileViewMode: .details)])])
+        let restored = try JSONDecoder().decode(AppPreferences.self, from: JSONEncoder().encode(preferences)).sanitized()
+        #expect(restored.fileViewMode == .tiles)
+        #expect(restored.workspace?.groups.first?.pages.map(\.fileViewMode) == [.tiles, .details])
+    }
     @Test func preferencesRoundTripWindowGroupsAndPageState() async throws {
         let f = try DirectoryFixture(); defer { f.remove() }; let file = try FileReference.capture(f.file("selected.txt"))
         var preferences = AppPreferences()

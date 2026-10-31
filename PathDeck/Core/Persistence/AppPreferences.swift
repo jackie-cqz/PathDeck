@@ -1,5 +1,7 @@
 import Foundation
 
+public enum FileViewMode: String, Codable, Sendable { case details, tiles }
+
 public struct WindowPlacement: Codable, Equatable, Sendable {
     public var x: Double, y: Double, width: Double, height: Double
     public init(x: Double, y: Double, width: Double, height: Double) { self.x = x; self.y = y; self.width = width; self.height = height }
@@ -20,6 +22,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     public var showHidden = false
     public var windowsFriendly = true
     public var compactList: Bool?
+    public var fileViewMode: FileViewMode?
     public var workspace: WorkspaceSnapshot?
     public var favorites: [String]?
     public var favoriteNames: [String: String]?

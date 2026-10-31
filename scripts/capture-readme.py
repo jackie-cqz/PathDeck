@@ -26,7 +26,7 @@ with tempfile.TemporaryDirectory(prefix="PathDeck-Readme-", dir="/private/tmp") 
     result = report.read_text()
     print(result)
     (build / "stderr.log").write_text(errors.read_text())
-    assert result.startswith("Exported six native AppKit screenshots"), "Capture app did not complete; see build/ReadmeCapture/stderr.log"
-names = ["overview-light", "overview-dark", "path-entry", "name-filter", "inline-rename", "file-properties"]
+    assert result.startswith("Exported eight native AppKit screenshots"), "Capture app did not complete; see build/ReadmeCapture/stderr.log"
+names = ["tiles-light", "tiles-dark", "overview-light", "overview-dark", "path-entry", "name-filter", "inline-rename", "file-properties"]
 assert all((root / f"docs/images/showcase/{name}.png").is_file() for name in names)
 print(json.dumps({"screenshots": names, "count": len(names)}))

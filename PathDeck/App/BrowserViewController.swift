@@ -114,6 +114,9 @@ final class BrowserViewController: NSViewController, NSMenuItemValidation {
         sidebar.onFailure = { [weak self] in self?.showFailure($0) }
         filterBar.onChange = { [weak self] in self?.session.setFilter($0) }
         filterBar.onExit = { [weak self] in self?.fileList.focus() }
+        fileList.setViewMode(pendingPageState?.fileViewMode ?? preferences.value.fileViewMode ?? .tiles)
+        filterBar.viewPicker.selectedSegment = fileList.viewMode == .tiles ? 0 : 1
+        filterBar.onViewMode = { [weak self] tiles in self?.changeViewMode(tiles ? .tiles : .details) }
         fileList.onOpen = { [weak self] in self?.open($0) }
         fileList.onBack = { [weak self] in self?.goBack(nil) }; fileList.onRefresh = { [weak self] in self?.refreshDirectory(nil) }
         fileList.onCopyPaths = { [weak self] in self?.copyPaths($0) }; fileList.onReveal = { NSWorkspace.shared.activateFileViewerSelecting($0) }
@@ -179,7 +182,7 @@ final class BrowserViewController: NSViewController, NSMenuItemValidation {
     }
     private func connectKeyLoop() {
         addressBar.connectKeyLoop(sidebar: sidebar.keyboardView, list: fileList.keyboardView, tasks: tasksButton)
-        sidebar.keyboardView.nextKeyView = filterBar.field; filterBar.field.nextKeyView = fileList.keyboardView
+        sidebar.keyboardView.nextKeyView = filterBar.field; filterBar.field.nextKeyView = filterBar.viewPicker; filterBar.viewPicker.nextKeyView = fileList.keyboardView
     }
     func navigate(input: String) {
         fileList.cancelRename()
@@ -347,6 +350,14 @@ final class BrowserViewController: NSViewController, NSMenuItemValidation {
         propertyWindows.removeAll()
     }
     @objc func focusFilter(_ sender: Any?) { fileList.cancelRename(); filterBar.focus() }
+    @objc func showTiles(_ sender: Any?) { changeViewMode(.tiles) }
+    @objc func showDetails(_ sender: Any?) { changeViewMode(.details) }
+    func changeViewMode(_ mode: FileViewMode) {
+        pendingPageState?.fileViewMode = mode
+        session.scrollAnchor = fileList.viewportAnchor
+        fileList.setViewMode(mode); filterBar.viewPicker.selectedSegment = mode == .tiles ? 0 : 1; connectKeyLoop()
+        preferences.value.fileViewMode = mode; preferences.changed(); fileList.focus()
+    }
     @objc func openCurrentTerminal(_ sender: Any?) { openTerminal(at: session.currentDirectory) }
     private func openTerminal(at directory: URL) {
         Task { [weak self] in
@@ -393,7 +404,7 @@ final class BrowserViewController: NSViewController, NSMenuItemValidation {
     func pageSnapshot() -> BrowserPageSnapshot {
         if let saved = pendingPageState, renderedDirectory == nil { return saved }
         let anchor = fileList.viewportAnchor.flatMap { url in session.items.first { $0.url == url }?.reference }
-        return BrowserPageSnapshot(directory: session.currentDirectory.path, selection: fileList.selectedReferences, anchor: anchor, filter: session.filterQuery, sort: session.sort, showHidden: session.showHidden, columns: fileList.columnPreferences(), sidebarWidth: Double(sidebar.view.bounds.width))
+        return BrowserPageSnapshot(directory: session.currentDirectory.path, selection: fileList.selectedReferences, anchor: anchor, filter: session.filterQuery, sort: session.sort, showHidden: session.showHidden, columns: fileList.columnPreferences(), sidebarWidth: Double(sidebar.view.bounds.width), fileViewMode: fileList.viewMode)
     }
     @objc private func splitResized(_ notification: Notification) { capturePreferences() }
     @objc private func volumesChanged(_ notification: Notification) { sidebar.invalidateDirectories(); lastSidebarURL = nil; backgroundRefresh() }
@@ -402,8 +413,8 @@ final class BrowserViewController: NSViewController, NSMenuItemValidation {
         guard view.window?.isVisible == true else { return }
         resumeMonitoring(); sidebar.checkFavorites(); if renderedDirectory != nil { backgroundRefresh() }
     }
-    func resumeMonitoring() { monitoring = true; actionContext.setMonitoring(true, for: actions); updateMonitoring(immediate: true) }
-    func stopMonitoring() { monitoring = false; monitorUpdateTask?.cancel(); backgroundTask?.cancel(); actionContext.setMonitoring(false, for: actions); monitor.stop() }
+    func resumeMonitoring() { monitoring = true; fileList.resumeThumbnails(); actionContext.setMonitoring(true, for: actions); updateMonitoring(immediate: true) }
+    func stopMonitoring() { monitoring = false; fileList.stopThumbnails(); monitorUpdateTask?.cancel(); backgroundTask?.cancel(); actionContext.setMonitoring(false, for: actions); monitor.stop() }
     func monitorCount() async -> Int { await monitor.activeCount() }
     func isMonitoringCurrentDirectory() async -> Bool { await monitor.isWatching(session.currentDirectory) }
     private func applyMonitoring(_ urls: [URL]) {
@@ -455,6 +466,8 @@ final class BrowserViewController: NSViewController, NSMenuItemValidation {
         else if pendingBackgroundRefresh { pendingBackgroundRefresh = false; backgroundRefresh() }
     }
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(showTiles(_:)) { item.state = fileList.viewMode == .tiles ? .on : .off; return true }
+        if item.action == #selector(showDetails(_:)) { item.state = fileList.viewMode == .details ? .on : .off; return true }
         if item.action == #selector(undo(_:)) {
             item.title = actionContext.undoHistory.latest.map { "撤销" + $0.title } ?? "撤销文件操作"
             return !actionContext.isBusy && actionContext.undoHistory.latest != nil && !(view.window?.firstResponder is NSTextView)

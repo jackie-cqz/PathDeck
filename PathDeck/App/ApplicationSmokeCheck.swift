@@ -88,6 +88,7 @@ enum ApplicationSmokeCheck {
         fputs("Smoke: interaction\n", stderr)
         checks.merge(await InteractionCheck.run(browser: browser, fixture: fixture)) { _, new in new }
         checks.merge(await DragDropCheck.run(browser: browser, fixture: fixture)) { _, new in new }
+        checks.merge(await TileCheck.run(browser: browser, fixture: fixture)) { _, new in new }
         checks.merge(await ContinuityCheck.run(browser: browser, fixture: fixture)) { _, new in new }
         fputs("Smoke: completed\n", stderr)
         window.setFrame(NSRect(origin: window.frame.origin, size: window.minSize), display: true)

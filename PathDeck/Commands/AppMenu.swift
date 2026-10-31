@@ -48,6 +48,9 @@ enum AppMenu {
         append(edit, to: main)
 
         let view = NSMenu(title: "显示")
+        view.addItem(withTitle: "平铺视图", action: #selector(AppDelegate.showTiles(_:)), keyEquivalent: "1").target = commandTarget
+        view.addItem(withTitle: "详情列表", action: #selector(AppDelegate.showDetails(_:)), keyEquivalent: "2").target = commandTarget
+        view.addItem(.separator())
         view.addItem(withTitle: "紧凑列表", action: #selector(AppDelegate.toggleCompactList(_:)), keyEquivalent: "").target = commandTarget
         append(view, to: main)
 

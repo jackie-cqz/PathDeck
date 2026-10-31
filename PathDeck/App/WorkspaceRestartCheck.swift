@@ -22,6 +22,7 @@ import PathDeckCore
             try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
             guard let third = app.makeWindow(at: d, tabOf: tab) else { return ["producerThirdTab": false] }
             await third.browser.waitForNavigation()
+            third.browser.changeViewMode(.tiles)
             other.browser.toggleHidden(nil); await other.browser.waitForNavigation()
             other.browser.session.setFilter("session"); select(other.browser, names: ["keep.session.txt", "replace.session.txt"])
             first.window?.tabGroup?.selectedWindow = first.window
@@ -47,7 +48,7 @@ import PathDeckCore
             if case .failed = page.session.contentState { missingKept = page.pageSnapshot().directory == state.directory; continue }
             let available = Set(page.session.items.compactMap(\.identity)), expected = Set(state.selection.compactMap(\.identity)).intersection(available)
             selectionCorrect = selectionCorrect && Set(page.fileList.selectedReferences.compactMap(\.identity)) == expected
-            fieldsCorrect = fieldsCorrect && page.session.filterQuery == state.filter && page.session.sort == state.sort && page.session.showHidden == state.showHidden && page.fileList.columnPreferences().map(\.id) == state.columns.map(\.id)
+            fieldsCorrect = fieldsCorrect && page.session.filterQuery == state.filter && page.session.sort == state.sort && page.session.showHidden == state.showHidden && page.fileList.columnPreferences().map(\.id) == state.columns.map(\.id) && page.fileList.viewMode == state.fileViewMode
             if state.directory.hasSuffix("Session C") { replacementSkipped = page.fileList.selectedReferences.count == 1 && page.fileList.selectedReferences.first?.url.lastPathComponent == "keep.session.txt" }
             if state.directory.hasSuffix("中文 Folder") { renamedSelected = page.fileList.selectedReferences.first?.url.lastPathComponent == "hello-renamed.txt" }
         }

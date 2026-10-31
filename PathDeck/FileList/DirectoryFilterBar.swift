@@ -3,6 +3,8 @@ import AppKit
 @MainActor
 final class DirectoryFilterBar: NSView, NSSearchFieldDelegate {
     let field = NSSearchField()
+    let viewPicker = NSSegmentedControl(images: [NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: "平铺")!, NSImage(systemSymbolName: "list.bullet", accessibilityDescription: "详情")!], trackingMode: .selectOne, target: nil, action: nil)
+    var onViewMode: ((Bool) -> Void)?
     private let title = NSTextField(labelWithString: "当前位置")
     var directory: URL? { didSet { title.stringValue = directory?.path == "/" ? "/" : directory?.lastPathComponent ?? "当前位置"; title.toolTip = directory?.path } }
     var onChange: ((String) -> Void)?
@@ -18,13 +20,18 @@ final class DirectoryFilterBar: NSView, NSSearchFieldDelegate {
         field.setAccessibilityLabel("过滤当前目录名称")
         field.setAccessibilityIdentifier("PathDeck.NameFilter")
         field.setAccessibilityHelp("只显示当前目录中名称匹配的项目，不递归搜索。Escape 清除过滤并返回列表。")
-        for v in [icon, title, field] { v.translatesAutoresizingMaskIntoConstraints = false; addSubview(v) }
+        viewPicker.target = self; viewPicker.action = #selector(viewChanged)
+        viewPicker.setToolTip("平铺视图（⌘1）", forSegment: 0); viewPicker.setToolTip("详情列表（⌘2）", forSegment: 1)
+        viewPicker.setAccessibilityLabel("文件显示方式")
+        for v in [icon, title, field, viewPicker] { v.translatesAutoresizingMaskIntoConstraints = false; addSubview(v) }
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16), icon.centerYAnchor.constraint(equalTo: centerYAnchor), icon.widthAnchor.constraint(equalToConstant: 20), icon.heightAnchor.constraint(equalToConstant: 20),
-            title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8), title.centerYAnchor.constraint(equalTo: centerYAnchor), title.trailingAnchor.constraint(lessThanOrEqualTo: field.leadingAnchor, constant: -24),
-            field.widthAnchor.constraint(equalToConstant: 300), field.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14), field.centerYAnchor.constraint(equalTo: centerYAnchor),
+            title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8), title.centerYAnchor.constraint(equalTo: centerYAnchor), title.trailingAnchor.constraint(lessThanOrEqualTo: viewPicker.leadingAnchor, constant: -16),
+            viewPicker.trailingAnchor.constraint(equalTo: field.leadingAnchor, constant: -12), viewPicker.centerYAnchor.constraint(equalTo: centerYAnchor),
+            field.widthAnchor.constraint(equalToConstant: 270), field.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14), field.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
+    @objc private func viewChanged() { onViewMode?(viewPicker.selectedSegment == 0) }
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError("Use init(frame:)") }
     @objc private func changed() { guard (field.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return }; onChange?(field.stringValue) }
     func controlTextDidChange(_ notification: Notification) {

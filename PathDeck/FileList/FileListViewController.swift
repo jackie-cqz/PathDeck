@@ -47,7 +47,7 @@ private final class BrowserTable: NSTableView, FileDragSource {
 @MainActor private final class FileListMessage: NSTextField {
     nonisolated override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
-@MainActor private final class FileDropScrollView: NSScrollView {
+@MainActor final class FileDropScrollView: NSScrollView {
     var validate: ((any NSDraggingInfo) -> NSDragOperation)?
     var accept: ((any NSDraggingInfo) -> Bool)?
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation { validate?(sender) ?? [] }
@@ -66,6 +66,8 @@ extension BrowserTable: NSMenuItemValidation {
 @MainActor
 final class FileListViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSMenuDelegate, FileDragSource {
     private let table = BrowserTable()
+    let grid = FileGridView()
+    private(set) var viewMode: FileViewMode = .details
     private let message = FileListMessage(wrappingLabelWithString: "正在读取目录…")
     var fileDragState: FileDragState { table.fileDragState }
     var drops: FileDropController?
@@ -84,9 +86,9 @@ final class FileListViewController: NSViewController, NSTableViewDataSource, NST
     var onEditingEnded: (() -> Void)?
     var onViewportChanged: (() -> Void)?
     private var nameColumn: Int { table.column(withIdentifier: .init("name")) }
-    var keyboardView: NSView { table }
+    var keyboardView: NSView { viewMode == .tiles ? grid.collection : table }
     var iconCacheCount: Int { icons.count }
-    var windowsFriendly: Bool { get { table.windowsFriendly } set { table.windowsFriendly = newValue } }
+    var windowsFriendly: Bool { get { table.windowsFriendly } set { table.windowsFriendly = newValue; grid.collection.windowsFriendly = newValue } }
     var compact: Bool = false { didSet { table.rowHeight = compact ? 24 : 30; table.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<table.numberOfRows)) } }
     var onWriteCopy: (([FileReference], Bool) -> Void)?
     var onWritePaste: ((FileReference?) -> Void)?
@@ -145,11 +147,24 @@ final class FileListViewController: NSViewController, NSTableViewDataSource, NST
             column.sortDescriptorPrototype = NSSortDescriptor(key: id, ascending: true)
             table.addTableColumn(column)
         }
+        grid.collection.fileDragState = fileDragState
+        grid.collection.onShortcut = { [weak self] in self?.onShortcut?($0) }
+        grid.collection.onOpen = { [weak self] in self?.openSelected() }
+        grid.collection.buildMenu = { [weak self] in self?.contextMenu(at: $0) }
+        grid.collection.validate = { [weak self] info, row in self?.validateDrop(info, row: row, operation: .on) ?? [] }
+        grid.collection.accept = { [weak self] info, row in self?.acceptDrop(info, row: row) ?? false }
+        grid.scroll.validate = { [weak self] info in self?.validateDrop(info, row: -1, operation: .on) ?? [] }
+        grid.scroll.accept = { [weak self] info in self?.acceptDrop(info, row: -1) ?? false }
+        grid.writer = { [weak self] row in guard let self else { return nil }; return self.tableView(self.table, pasteboardWriterForRow: row) }
+        grid.onSelection = { [weak self] in guard let self, !self.applying, self.viewMode == .tiles else { return }; self.onSelection?(self.selectedURLs, self.grid.anchor) }
+        grid.onViewport = { [weak self] in guard self?.viewMode == .tiles else { return }; self?.onViewportChanged?() }
         scroll.documentView = table
         let headerMenu = NSMenu(); headerMenu.autoenablesItems = false; headerMenu.delegate = self; table.headerView?.menu = headerMenu
         scroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(viewportChanged), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
         scroll.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(scroll)
+        grid.scroll.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(grid.scroll); grid.scroll.isHidden = true
+        NSLayoutConstraint.activate([grid.scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor), grid.scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor), grid.scroll.topAnchor.constraint(equalTo: view.topAnchor), grid.scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor)])
         message.font = .systemFont(ofSize: 15); message.textColor = .secondaryLabelColor; message.alignment = .center
         message.setAccessibilityIdentifier("PathDeck.ListState")
         message.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(message)
@@ -184,13 +199,27 @@ final class FileListViewController: NSViewController, NSTableViewDataSource, NST
         case .failed(let error): message.stringValue = items.isEmpty ? error : ""
         }
         table.isEnabled = session.contentState == .loaded
+        if viewMode == .tiles { grid.display(items, selection: session.selection, anchor: session.scrollAnchor, enabled: table.isEnabled) }
         applying = false
     }
-    func focus() { view.window?.makeFirstResponder(table) }
+    func focus() { view.window?.makeFirstResponder(keyboardView) }
+    func setViewMode(_ mode: FileViewMode) {
+        loadViewIfNeeded(); guard mode != viewMode else { return }
+        let selected = selectedURLs, anchor = viewportAnchor
+        cancelRename(); applying = true; grid.stop(); viewMode = mode
+        table.enclosingScrollView?.isHidden = mode == .tiles; grid.scroll.isHidden = mode != .tiles
+        table.selectRowIndexes(IndexSet(items.indices.filter { selected.contains(items[$0].url) }), byExtendingSelection: false)
+        if mode == .tiles { grid.reload(); grid.display(items, selection: selected, anchor: anchor, enabled: table.isEnabled) }
+        else if let anchor, let index = items.firstIndex(where: { $0.url == anchor }) { table.scrollRowToVisible(index) }
+        applying = false; onSelection?(selected, anchor); onViewportChanged?()
+    }
+    func stopThumbnails() { grid.stop() }
+    func resumeThumbnails() { if viewMode == .tiles { grid.resume() } }
+    private var selectedIndexes: IndexSet { viewMode == .tiles ? grid.selectedIndexes : table.selectedRowIndexes }
     func performShortcut(_ action: BrowserShortcut) {
         switch action {
         case .copy: table.onCopy?(); case .cut: table.onCut?(); case .paste: table.onPaste?()
-        case .selectAll: table.selectAll(nil); case .open: openSelected()
+        case .selectAll: if viewMode == .tiles { grid.select(IndexSet(items.indices)) } else { table.selectAll(nil) }; case .open: openSelected()
         case .rename: table.onRename?(); case .trash: table.onTrash?()
         default: break
         }
@@ -209,6 +238,7 @@ final class FileListViewController: NSViewController, NSTableViewDataSource, NST
     func tableViewColumnDidMove(_ notification: Notification) { if !applying { onColumnsChanged?() } }
     @objc private func viewportChanged() { if !applying { onViewportChanged?() } }
     var visibleFileURLs: [URL] {
+        if viewMode == .tiles { return Array(grid.visibleIndexes.filter { items[$0].kind != .directory }.prefix(32).map { items[$0].url }) }
         let range = table.rows(in: table.visibleRect)
         guard range.location != NSNotFound else { return [] }
         return Array((range.location..<NSMaxRange(range)).filter { items.indices.contains($0) && items[$0].kind != .directory }.prefix(32).map { items[$0].url })
@@ -220,12 +250,16 @@ final class FileListViewController: NSViewController, NSTableViewDataSource, NST
         cancellingRename = true
         if let renaming { renamingField?.stringValue = renaming.url.lastPathComponent }
         renamingField?.isEditable = false
-        if renamingField?.currentEditor() != nil { view.window?.makeFirstResponder(table) }
+        if renamingField?.currentEditor() != nil { view.window?.makeFirstResponder(keyboardView) }
         renaming = nil; renamingField = nil; cancellingRename = false
     }
-    func contextMenu(at row: Int) -> NSMenu? { table.contextMenu(at: row) }
-    var selectedURLs: Set<URL> { Set(table.selectedRowIndexes.compactMap { items.indices.contains($0) ? items[$0].url : nil }) }
-    var selectedReferences: [FileReference] { table.selectedRowIndexes.compactMap { items.indices.contains($0) ? items[$0].reference : nil } }
+    func contextMenu(at row: Int) -> NSMenu? {
+        if viewMode == .details { return table.contextMenu(at: row) }
+        if items.indices.contains(row), !grid.selectedIndexes.contains(row) { grid.select(IndexSet(integer: row)) }
+        return contextMenu(row: row)
+    }
+    var selectedURLs: Set<URL> { Set(selectedIndexes.compactMap { items.indices.contains($0) ? items[$0].url : nil }) }
+    var selectedReferences: [FileReference] { selectedIndexes.compactMap { items.indices.contains($0) ? items[$0].reference : nil } }
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
         guard table.isEnabled, !isRenaming, drops?.canStart == true, items.indices.contains(row) else { return nil }
         return fileDragState.writer(for: items[row].reference)
@@ -259,7 +293,7 @@ final class FileListViewController: NSViewController, NSTableViewDataSource, NST
         return drops?.accept(info, destination: validatedDrop.destination) ?? false
     }
     func setCutURLs(_ urls: Set<URL>) {
-        cutURLs = urls
+        cutURLs = urls; grid.cutURLs = urls
         for row in table.rows(in: table.visibleRect).location..<NSMaxRange(table.rows(in: table.visibleRect)) where items.indices.contains(row) {
             table.view(atColumn: nameColumn, row: row, makeIfNecessary: false)?.alphaValue = urls.contains(items[row].url) ? 0.45 : 1
             if let cell = table.view(atColumn: nameColumn, row: row, makeIfNecessary: false) as? NSTableCellView { cell.textField?.setAccessibilityValue(items[row].displayName + (urls.contains(items[row].url) ? "，待移动" : "")) }
@@ -267,9 +301,16 @@ final class FileListViewController: NSViewController, NSTableViewDataSource, NST
     }
     func beginRename(_ reference: FileReference) {
         guard let row = items.firstIndex(where: { $0.url == reference.url && $0.identity == reference.identity }) else { return }
-        table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false); table.scrollRowToVisible(row)
-        guard let cell = table.view(atColumn: nameColumn, row: row, makeIfNecessary: true) as? NSTableCellView, let field = cell.textField else { return }
-        view.window?.makeFirstResponder(table)
+        let field: NSTextField
+        if viewMode == .tiles {
+            grid.select(IndexSet(integer: row))
+            guard let name = grid.field(at: row) else { return }; field = name
+        } else {
+            table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false); table.scrollRowToVisible(row)
+            guard let cell = table.view(atColumn: nameColumn, row: row, makeIfNecessary: true) as? NSTableCellView, let name = cell.textField else { return }; field = name
+        }
+        field.delegate = self
+        view.window?.makeFirstResponder(keyboardView)
         changingRenameFocus = true
         defer { changingRenameFocus = false }
         renaming = reference; renamingField = field; field.stringValue = items[row].realName; field.isEditable = true; field.isSelectable = true
@@ -282,6 +323,7 @@ final class FileListViewController: NSViewController, NSTableViewDataSource, NST
         }
     }
     var viewportAnchor: URL? {
+        if viewMode == .tiles { return grid.anchor }
         let row = table.row(at: table.visibleRect.origin)
         return items.indices.contains(row) ? items[row].url : nil
     }
@@ -332,11 +374,11 @@ final class FileListViewController: NSViewController, NSTableViewDataSource, NST
         onSort?(FileSort(column: FileSort.Column(rawValue: descriptor.key ?? "name") ?? .name, ascending: descriptor.ascending))
     }
     @objc private func openSelected() {
-        guard table.selectedRow >= 0, items.indices.contains(table.selectedRow) else { return }; onOpen?(items[table.selectedRow])
+        guard let index = selectedIndexes.first, items.indices.contains(index) else { return }; onOpen?(items[index])
     }
     private func contextMenu(row: Int) -> NSMenu {
         let menu = NSMenu(); menu.autoenablesItems = false
-        let chosen = row < 0 ? [] : table.selectedRowIndexes.compactMap { items.indices.contains($0) ? items[$0] : nil }
+        let chosen = row < 0 ? [] : selectedIndexes.compactMap { items.indices.contains($0) ? items[$0] : nil }
         func add(_ title: String, _ action: Selector, _ urls: [URL]) {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: ""); item.target = self; item.representedObject = urls; menu.addItem(item)
         }
@@ -411,9 +453,9 @@ final class FileListViewController: NSViewController, NSTableViewDataSource, NST
         if command == #selector(NSResponder.cancelOperation(_:)) {
             cancellingRename = true
             if let reference = renaming { (control as? NSTextField)?.stringValue = reference.url.lastPathComponent }
-            view.window?.makeFirstResponder(table); renaming = nil; cancellingRename = false; return true
+            view.window?.makeFirstResponder(keyboardView); renaming = nil; cancellingRename = false; return true
         }
-        if command == #selector(NSResponder.insertNewline(_:)) { view.window?.makeFirstResponder(table); return true }
+        if command == #selector(NSResponder.insertNewline(_:)) { view.window?.makeFirstResponder(keyboardView); return true }
         return false
     }
     func menuNeedsUpdate(_ menu: NSMenu) {

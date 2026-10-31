@@ -10,6 +10,7 @@ enum PerformanceCheck {
     static func run(window: NSWindow, fixture: URL) async {
         guard let browser = window.contentViewController as? BrowserViewController else { exit(1) }
         await browser.waitForNavigation(); window.contentView?.layoutSubtreeIfNeeded(); window.displayIfNeeded()
+        if CommandLine.arguments.contains("--tiles-performance-test") { browser.changeViewMode(.tiles) }
         let startup = (ProcessInfo.processInfo.systemUptime - RuntimeContext.startedAt) * 1000
         var heartbeat = ProcessInfo.processInfo.systemUptime, largestGap = 0.0
         let pulse = Task { @MainActor in
@@ -60,6 +61,7 @@ enum PerformanceCheck {
             for index in 0..<10 {
                 browser.navigate(to: directories[index % 2]); await browser.waitForNavigation()
                 (browser.fileList.keyboardView as? NSTableView)?.scrollRowToVisible(index * 80)
+                (browser.fileList.keyboardView as? NSCollectionView)?.scrollToItems(at: [IndexPath(item: index * 80, section: 0)], scrollPosition: .top)
                 window.contentView?.layoutSubtreeIfNeeded()
             }
             try? await Task.sleep(for: .milliseconds(400))
@@ -70,7 +72,7 @@ enum PerformanceCheck {
             let small = measurements["1000"]!.sorted()[1], large = measurements["10000"]!.sorted()[1]
             let passed = correct && filterCorrect && filterMS < 500 && small < 500 && large < 2000 && watches <= 64 && stopped == 0 && browser.fileList.iconCacheCount <= 128
             let report: [String: Any] = [
-                "passed": passed, "configuration": "Release", "cacheCondition": "freshly generated local fixture; OS caches warm; three visits each",
+                "passed": passed, "configuration": "Release", "viewMode": browser.fileList.viewMode.rawValue, "cacheCondition": "freshly generated local fixture; OS caches warm; three visits each",
                 "startupToVisibleListMS": startup, "fixtureGenerationMS": generationMS, "directoryToDisplayedRowsMS": measurements,
                 "median1000MS": small, "median10000MS": large, "largestMainActorHeartbeatGapMS": largestGap,
                 "filter10000MS": filterMS, "filterCorrect": filterCorrect,
