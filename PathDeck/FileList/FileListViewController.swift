@@ -250,6 +250,7 @@ final class FileListViewController: NSViewController, NSTableViewDataSource, NST
         cancellingRename = true
         if let renaming { renamingField?.stringValue = renaming.url.lastPathComponent }
         renamingField?.isEditable = false
+        renamingField?.isSelectable = false
         if renamingField?.currentEditor() != nil { view.window?.makeFirstResponder(keyboardView) }
         renaming = nil; renamingField = nil; cancellingRename = false
     }
@@ -444,7 +445,7 @@ final class FileListViewController: NSViewController, NSTableViewDataSource, NST
     @objc private func trashContext(_ item: NSMenuItem) { if let refs = item.representedObject as? [FileReference] { onWriteTrash?(refs) } }
     func controlTextDidEndEditing(_ notification: Notification) {
         guard !changingRenameFocus, let field = notification.object as? NSTextField, field === renamingField, let reference = renaming else { return }
-        renaming = nil; renamingField = nil; field.isEditable = false
+        renaming = nil; renamingField = nil; field.isEditable = false; field.isSelectable = false
         if !cancellingRename && field.stringValue != reference.url.lastPathComponent { onCommitRename?(reference, field.stringValue) }
         onEditingEnded?()
     }
