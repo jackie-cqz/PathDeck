@@ -53,8 +53,13 @@ public final class FileOperationEngine: @unchecked Sendable {
             do {
                 try cancellation.check()
                 try self.save(record) // Journal failure prevents any new mutation.
-                let destination = try self.executeSync(&record, source: source, name: name, cancellation: cancellation)
-                return OperationStep(result: FileOperationResult(source: source?.url, destination: destination, outcome: .succeeded), conflict: nil, artifacts: record.artifacts)
+                var undoStep: FileUndoStep?
+                let originalParent = [.rename, .move].contains(record.request.kind) ? source.flatMap { try? FileReference.capture($0.url.deletingLastPathComponent()) } : nil
+                let destination = try self.executeSync(&record, source: source, name: name, cancellation: cancellation, created: &undoStep)
+                if let source, let originalParent, let destination, source.url.path != destination.path {
+                    undoStep = FileUndoStep(current: FileReference(url: destination, identity: source.identity), originalParent: originalParent, originalName: source.url.lastPathComponent)
+                }
+                return OperationStep(result: FileOperationResult(source: source?.url, destination: destination, outcome: .succeeded, undoStep: undoStep), conflict: nil, artifacts: record.artifacts)
             } catch FileOperationError.conflict(let url) {
                 return OperationStep(result: nil, conflict: url, artifacts: record.artifacts)
             } catch {
@@ -64,8 +69,33 @@ public final class FileOperationEngine: @unchecked Sendable {
         }) ?? OperationStep(result: FileOperationResult(source: source?.url, destination: nil, outcome: .failed, message: "无法启动文件操作。"), conflict: nil, artifacts: input.artifacts)
     }
 
-    private func executeSync(_ record: inout FileOperationRecord, source: FileReference?, name: String?, cancellation: OperationCancellation) throws -> URL? {
+    private func executeSync(_ record: inout FileOperationRecord, source: FileReference?, name: String?, cancellation: OperationCancellation, created: inout FileUndoStep?) throws -> URL? {
         let request = record.request
+        if request.kind == .undo {
+            guard let source, let step = request.undoSteps?.first(where: { $0.current == source }) else { throw FileOperationError.unsupported }
+            try verifySupported(source); try cancellation.check()
+            if let creation = step.creation {
+                var result: URL?
+                try coordinated(source.url, options: .forDeleting) { actual in
+                    try source.verify(); try cancellation.check()
+                    let now = try FileCreationStamp.capture(actual)
+                    guard now == creation else { throw self.undoModified(source.url) }
+                    if source.identity?.mode == S_IFDIR {
+                        guard try FileManager.default.contentsOfDirectory(atPath: actual.path).isEmpty else { throw self.undoModified(source.url) }
+                    } else { guard source.identity?.mode == S_IFREG, now.bytes == 0 else { throw self.undoModified(source.url) } }
+                    result = try self.trash(actual)
+                }
+                return result
+            }
+            guard let parent = step.originalParent, let name = step.originalName else { throw FileOperationError.unsupported }
+            let sameParent = source.url.deletingLastPathComponent().path == parent.url.path
+            var inverse = FileOperationRecord(request: .init(inverseOf: request, kind: sameParent ? .rename : .move, source: source, destination: parent, name: name))
+            var ignored: FileUndoStep?
+            do {
+                let result = try executeSync(&inverse, source: source, name: name, cancellation: cancellation, created: &ignored)
+                record.artifacts = inverse.artifacts; return result
+            } catch { record.artifacts = inverse.artifacts; throw error }
+        }
         if request.kind == .trash {
             guard let source else { throw FileOperationError.unsupported }
             try verifySupported(source); try cancellation.check()
@@ -104,10 +134,13 @@ public final class FileOperationEngine: @unchecked Sendable {
                 let fd = try self.openDirectory(target); defer { close(fd) }
                 if request.kind == .newFolder {
                     guard mkdirat(fd, filename, 0o755) == 0 else { try self.throwPOSIX(destination) }
+                    if let reference = try? FileReference.capture(destination), let stamp = try? FileCreationStamp.capture(destination) { created = FileUndoStep(current: reference, creation: stamp) }
                 } else {
                     let file = openat(fd, filename, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o644)
                     guard file >= 0 else { try self.throwPOSIX(destination) }
                     defer { close(file) }
+                    var status = stat()
+                    if fstat(file, &status) == 0, let reference = try? FileReference.capture(destination), reference.identity?.inode == UInt64(status.st_ino), reference.identity?.device == UInt64(UInt32(bitPattern: status.st_dev)), let stamp = try? FileCreationStamp.capture(destination) { created = FileUndoStep(current: reference, creation: stamp) }
                 }
             }
             return destination
@@ -141,9 +174,10 @@ public final class FileOperationEngine: @unchecked Sendable {
                 if rmdir(stage.path) == 0 { record.artifacts.removeAll { $0 == stage } }
             }
             return destination
-        case .trash: throw FileOperationError.unsupported
+        case .trash, .undo: throw FileOperationError.unsupported
         }
     }
+    private func undoModified(_ url: URL) -> NSError { NSError(domain: "PathDeck.Undo", code: 1, userInfo: [NSLocalizedDescriptionKey: "项目已被修改，未撤销新建：\(url.path)"]) }
 
     public static func validateName(_ name: String) throws {
         if name.isEmpty || name == "." || name == ".." || name.contains("/") || name.contains("\0") { throw FileOperationError.invalidName }

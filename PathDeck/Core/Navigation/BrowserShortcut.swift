@@ -2,7 +2,7 @@ import Foundation
 
 public enum BrowserShortcut: Equatable, Sendable {
     case copy, cut, paste, selectAll, newFolder, newWindow, newTab, closeTab, nextTab, previousTab
-    case back, forward, up, refresh, open, rename, trash, blockedDelete, preview, properties, filter
+    case back, forward, up, refresh, open, rename, trash, blockedDelete, preview, properties, filter, undo
     public struct Modifiers: OptionSet, Sendable {
         public let rawValue: Int
         public init(rawValue: Int) { self.rawValue = rawValue }
@@ -32,6 +32,7 @@ public enum BrowserShortcut: Equatable, Sendable {
             switch character {
             case "c": return .copy; case "x": return .cut; case "v": return .paste; case "a": return .selectAll
             case "f": return .filter; case "n": return .newWindow; case "t": return .newTab; case "w": return .closeTab
+            case "z": return .undo
             default: break
             }
         }

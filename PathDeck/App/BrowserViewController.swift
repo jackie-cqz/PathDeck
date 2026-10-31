@@ -30,6 +30,8 @@ final class BrowserViewController: NSViewController, NSMenuItemValidation {
     private let inspector = DirectoryReader()
     let actionContext: FileActionContext
     lazy var actions = FileActionController(browser: self, context: actionContext)
+    lazy var drops = FileDropController(actions: actions)
+    private var fileDragging = false
     lazy var preview: FilePreviewController = { let value = FilePreviewController(); value.owner = self; return value }()
     private(set) var propertyWindows: [FilePropertiesWindowController] = []
     var onWindowCommand: ((BrowserShortcut) -> Void)?
@@ -52,12 +54,16 @@ final class BrowserViewController: NSViewController, NSMenuItemValidation {
     private var loadingVisible = false
     private var restoreListFocusAfterLoad = false
     private let initialSidebarWidth: Double
+    private var pendingPageState: BrowserPageSnapshot?
+    private let keepsUnavailablePage: Bool
 
-    init(session: BrowserSession, preferences: PreferencesController, actionContext: FileActionContext? = nil) {
+    init(session: BrowserSession, preferences: PreferencesController, actionContext: FileActionContext? = nil, pageState: BrowserPageSnapshot? = nil) {
         self.session = session
         self.preferences = preferences
         self.actionContext = actionContext ?? FileActionContext()
-        initialSidebarWidth = preferences.value.sidebarWidth
+        pendingPageState = pageState; keepsUnavailablePage = pageState != nil
+        initialSidebarWidth = pageState?.sidebarWidth ?? preferences.value.sidebarWidth
+        if let pageState { session.sort = pageState.sort; session.showHidden = pageState.showHidden }
         coordinator = NavigationCoordinator(session: session)
         addressBar = AddressBarView(directory: session.currentDirectory)
         sidebar = SidebarViewController(preferences: preferences.value)
@@ -128,6 +134,10 @@ final class BrowserViewController: NSViewController, NSMenuItemValidation {
         sidebar.onProperties = { [weak self] in self?.showProperties([$0]) }
         fileList.onSort = { [weak self] in self?.session.changeSort($0) }
         fileList.onWriteCopy = { [weak self] in self?.actions.copy($0, cut: $1) }
+        fileList.drops = drops; sidebar.drops = drops
+        for state in [fileList.fileDragState, sidebar.fileDragState] {
+            state.onActivity = { [weak self] active in self?.fileDragging = active; if !active { self?.resumePendingRefresh() } }
+        }
         fileList.onWritePaste = { [weak self] destination in Task { _ = await self?.actions.paste(destination: destination) } }
         fileList.onWriteCreate = { [weak self] in _ = self?.actions.create($0, destination: $1) }
         fileList.onWriteRename = { [weak self] in self?.actions.beginRename($0) }
@@ -138,7 +148,7 @@ final class BrowserViewController: NSViewController, NSMenuItemValidation {
         actions.clipboardChanged()
         fileList.windowsFriendly = preferences.value.windowsFriendly
         fileList.compact = preferences.value.compactList ?? false
-        fileList.restoreColumns(preferences.value.columns)
+        fileList.restoreColumns(pendingPageState?.columns ?? preferences.value.columns)
         fileList.onColumnsChanged = { [weak self] in self?.capturePreferences() }
         fileList.onViewportChanged = { [weak self] in self?.updateMonitoring() }
         fileList.onEditingEnded = { [weak self] in self?.resumePendingRefresh() }
@@ -204,7 +214,7 @@ final class BrowserViewController: NSViewController, NSMenuItemValidation {
     func refreshAfterOperation(_ record: FileOperationRecord) async {
         // Refresh only the currently displayed location; never navigate back to
         // an operation's source/target after the user has browsed elsewhere.
-        if explicitNavigationPending || session.isLoading || fileList.isRenaming { needsWriteRefresh = true; return }
+        if explicitNavigationPending || session.isLoading || fileList.isRenaming || fileDragging { needsWriteRefresh = true; return }
         navigationStamp += 1; let stamp = navigationStamp; explicitNavigationPending = true
         defer { if navigationStamp == stamp { explicitNavigationPending = false; resumePendingRefresh() } }
         session.scrollAnchor = fileList.viewportAnchor
@@ -225,6 +235,7 @@ final class BrowserViewController: NSViewController, NSMenuItemValidation {
         addressBar.showHidden = session.showHidden
         switch session.contentState {
         case .loaded:
+            if let saved = pendingPageState { pendingPageState = nil; session.restoreViewState(saved) }
             if restoreListFocusAfterLoad, view.window?.firstResponder is NSWindow, !addressBar.isEditing, !fileList.isRenaming { fileList.focus() }
             restoreListFocusAfterLoad = false
             loadingVisible = false
@@ -241,7 +252,10 @@ final class BrowserViewController: NSViewController, NSMenuItemValidation {
             restoreListFocusAfterLoad = false
             loadingVisible = false
             loadingIndicatorTask?.cancel(); addressBar.showError(error)
-            if renderedDirectory == nil && !fallbackAttempted && preferences.value.lastDirectory != nil {
+            if keepsUnavailablePage, renderedDirectory == nil {
+                view.window?.title = "\(session.currentDirectory.lastPathComponent)（不可用）— PathDeck"; view.window?.tab.title = session.currentDirectory.lastPathComponent + "（不可用）"
+            }
+            if !keepsUnavailablePage && renderedDirectory == nil && !fallbackAttempted && preferences.value.lastDirectory != nil {
                 fallbackAttempted = true; statusNotice = "上次的位置不可用，已返回个人文件夹。"
                 Task { [weak self] in self?.navigate(to: FileManager.default.homeDirectoryForCurrentUser) }
             }
@@ -301,6 +315,7 @@ final class BrowserViewController: NSViewController, NSMenuItemValidation {
     }
     private func copyPaths(_ urls: [URL]) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(urls.map(\.path).joined(separator: "\n"), forType: .string) }
     @objc func editLocation(_ sender: Any?) { addressBar.beginEditing() }
+    @objc func undo(_ sender: Any?) { guard !(view.window?.firstResponder is NSTextView) else { return }; _ = actionContext.undo(owner: actions) }
     @objc func previewSelection(_ sender: Any?) { preview.toggle(fileList.selectedReferences.map(\.url)) }
     @objc func propertiesSelection(_ sender: Any?) { showProperties(fileList.selectedReferences.isEmpty ? [session.currentDirectory] : fileList.selectedReferences.map(\.url)) }
     func showProperties(_ urls: [URL]) {
@@ -322,6 +337,7 @@ final class BrowserViewController: NSViewController, NSMenuItemValidation {
         case .preview: previewSelection(nil)
         case .properties: propertiesSelection(nil)
         case .blockedDelete: NSSound.beep()
+        case .undo: undo(nil)
         default: onWindowCommand?(action)
         }
     }
@@ -374,6 +390,11 @@ final class BrowserViewController: NSViewController, NSMenuItemValidation {
         preferences.value.expandedDirectories = sidebar.expansionPaths
         preferences.changed()
     }
+    func pageSnapshot() -> BrowserPageSnapshot {
+        if let saved = pendingPageState, renderedDirectory == nil { return saved }
+        let anchor = fileList.viewportAnchor.flatMap { url in session.items.first { $0.url == url }?.reference }
+        return BrowserPageSnapshot(directory: session.currentDirectory.path, selection: fileList.selectedReferences, anchor: anchor, filter: session.filterQuery, sort: session.sort, showHidden: session.showHidden, columns: fileList.columnPreferences(), sidebarWidth: Double(sidebar.view.bounds.width))
+    }
     @objc private func splitResized(_ notification: Notification) { capturePreferences() }
     @objc private func volumesChanged(_ notification: Notification) { sidebar.invalidateDirectories(); lastSidebarURL = nil; backgroundRefresh() }
     func applicationActivated() {
@@ -403,7 +424,7 @@ final class BrowserViewController: NSViewController, NSMenuItemValidation {
         sidebar.refreshDirectories(changes.map(\.url))
         if changes.contains(where: { $0.unavailable || $0.relocatedURL != nil }) { sidebar.checkFavorites() }
         if let relocation = changes.first(where: { $0.url.path == session.currentDirectory.path })?.relocatedURL {
-            if fileList.isRenaming { pendingRelocation = relocation; return }
+            if fileList.isRenaming || fileDragging { pendingRelocation = relocation; return }
             followRelocation(relocation); return
         }
         backgroundRefresh()
@@ -414,12 +435,12 @@ final class BrowserViewController: NSViewController, NSMenuItemValidation {
     }
     private func backgroundRefresh() {
         guard monitoring, renderedDirectory != nil else { return }
-        guard !explicitNavigationPending, !session.isLoading, !fileList.isRenaming, backgroundTask == nil else { pendingBackgroundRefresh = true; return }
+        guard !explicitNavigationPending, !session.isLoading, !fileList.isRenaming, !fileDragging, backgroundTask == nil else { pendingBackgroundRefresh = true; return }
         session.scrollAnchor = fileList.viewportAnchor
         backgroundTask = Task { [weak self] in
             guard let self else { return }
             guard !Task.isCancelled else { self.backgroundTask = nil; self.resumePendingRefresh(); return }
-            guard !self.explicitNavigationPending, !self.session.isLoading, !self.fileList.isRenaming else {
+            guard !self.explicitNavigationPending, !self.session.isLoading, !self.fileList.isRenaming, !self.fileDragging else {
                 self.backgroundTask = nil; self.pendingBackgroundRefresh = true; return
             }
             _ = await self.coordinator.refresh()
@@ -428,12 +449,16 @@ final class BrowserViewController: NSViewController, NSMenuItemValidation {
         }
     }
     private func resumePendingRefresh() {
-        guard !explicitNavigationPending, !session.isLoading, !fileList.isRenaming else { return }
+        guard !explicitNavigationPending, !session.isLoading, !fileList.isRenaming, !fileDragging else { return }
         if let relocation = pendingRelocation { pendingRelocation = nil; followRelocation(relocation) }
         else if needsWriteRefresh { needsWriteRefresh = false; backgroundRefresh() }
         else if pendingBackgroundRefresh { pendingBackgroundRefresh = false; backgroundRefresh() }
     }
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(undo(_:)) {
+            item.title = actionContext.undoHistory.latest.map { "撤销" + $0.title } ?? "撤销文件操作"
+            return !actionContext.isBusy && actionContext.undoHistory.latest != nil && !(view.window?.firstResponder is NSTextView)
+        }
         if item.action == #selector(previewSelection(_:)) { return !fileList.selectedReferences.isEmpty && !(view.window?.firstResponder is NSTextView) }
         if item.action == #selector(propertiesSelection(_:)) { return !(view.window?.firstResponder is NSTextView) }
         if item.action == #selector(goBack(_:)) { return session.canGoBack }

@@ -134,5 +134,13 @@ public final class BrowserSession {
     public func clearHistory() {
         history = [Location(directory: currentDirectory, selection: selection, scrollAnchor: scrollAnchor, sort: sort)]; historyIndex = 0
     }
+    public func restoreViewState(_ state: BrowserPageSnapshot) {
+        guard contentState == .loaded, currentDirectory.path == state.directory else { return }
+        sort = state.sort; items = sort.apply(to: items); filterQuery = state.filter
+        let identities = Set(state.selection.compactMap(\.identity))
+        selection = Set(items.filter { $0.identity.map(identities.contains) == true }.map(\.url))
+        scrollAnchor = state.anchor?.identity.flatMap { identity in items.first { $0.identity == identity }?.url }
+        applyFilter(); onChange?()
+    }
 }
 

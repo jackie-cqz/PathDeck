@@ -20,7 +20,8 @@ private final class TreeNode: NSObject {
     }
 }
 
-@MainActor private final class DirectoryOutline: NSOutlineView {
+@MainActor private final class DirectoryOutline: NSOutlineView, FileDragSource {
+    let fileDragState = FileDragState()
     var activateSelection: (() -> Void)?
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 36 { activateSelection?(); return }; super.keyDown(with: event)
@@ -28,10 +29,13 @@ private final class TreeNode: NSObject {
 }
 
 @MainActor
-final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate {
+final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate, FileDragSource {
     private let outline = DirectoryOutline()
     private let reader = DirectoryReader()
     private let referenceReader = FileOperationEngine()
+    var fileDragState: FileDragState { outline.fileDragState }
+    var drops: FileDropController?
+    private var validatedDrop: (sequence: Int, node: TreeNode, destination: FileReference)?
     private var roots: [TreeNode] = []
     private var selecting = false
     private var syncGeneration = 0
@@ -83,6 +87,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("directory")); column.title = "目录"
         outline.addTableColumn(column); outline.outlineTableColumn = column; outline.headerView = nil
         outline.dataSource = self; outline.delegate = self; outline.rowHeight = 28; outline.style = .sourceList
+        outline.registerForDraggedTypes([.fileURL])
+        outline.setDraggingSourceOperationMask([.copy, .move], forLocal: true)
+        outline.setDraggingSourceOperationMask(.copy, forLocal: false)
         outline.setAccessibilityIdentifier("PathDeck.DirectoryTree")
         outline.setAccessibilityLabel("目录树")
         outline.setAccessibilityHelp("左右方向键展开或折叠目录，Enter 前往选中目录。")
@@ -109,6 +116,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
     }
     private func rebuild() {
+        fileDragState.invalidateOffers()
         syncingTask?.cancel(); syncGeneration += 1
         for root in roots { cancelLoads(root) }
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -242,6 +250,42 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
     func outlineView(_ outlineView: NSOutlineView, isGroupItem item: Any) -> Bool { (item as? TreeNode)?.group ?? false }
     func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool { (item as? TreeNode)?.url != nil }
+    func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> (any NSPasteboardWriting)? {
+        guard drops?.canStart == true, let node = item as? TreeNode, node.unavailable == nil, let reference = node.reference else { return nil }
+        return fileDragState.writer(for: reference)
+    }
+    func outlineView(_ outlineView: NSOutlineView, draggingSession session: NSDraggingSession, willBeginAt screenPoint: NSPoint, forItems draggedItems: [Any]) {
+        session.draggingFormation = .pile; fileDragState.begin(pasteboard: session.draggingPasteboard)
+    }
+    func outlineView(_ outlineView: NSOutlineView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) { fileDragState.end() }
+    func outlineView(_ outlineView: NSOutlineView, validateDrop info: any NSDraggingInfo, proposedItem item: Any?, proposedChildIndex index: Int) -> NSDragOperation {
+        validatedDrop = nil
+        guard let node = item as? TreeNode, !node.group, node.unavailable == nil, let destination = node.reference, let drops else { return [] }
+        let operation = drops.validate(info, destination: destination)
+        if !operation.isEmpty { outline.setDropItem(node, dropChildIndex: NSOutlineViewDropOnItemIndex); validatedDrop = (info.draggingSequenceNumber, node, destination) }
+        return operation
+    }
+    func outlineView(_ outlineView: NSOutlineView, acceptDrop info: any NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
+        guard let node = item as? TreeNode, let validatedDrop, validatedDrop.sequence == info.draggingSequenceNumber,
+              validatedDrop.node === node, node.unavailable == nil, node.reference == validatedDrop.destination, outline.row(forItem: node) >= 0 else { return false }
+        return drops?.accept(info, destination: validatedDrop.destination) ?? false
+    }
+    func outlineViewItemWillExpand(_ notification: Notification) {
+        guard let node = notification.userInfo?["NSObject"] as? TreeNode else { return }
+        Task { [weak self] in await self?.load(node) }
+    }
+    func outlineViewItemDidExpand(_ notification: Notification) {
+        guard let node = notification.userInfo?["NSObject"] as? TreeNode else { return }
+        if let path = node.url?.path { expandedPaths.insert(path); if expandedPaths.count > 128 { expandedPaths = Set(expandedPaths.sorted().prefix(128)) } }
+        onStateChange?()
+    }
+    func outlineViewItemDidCollapse(_ notification: Notification) {
+        guard let node = notification.userInfo?["NSObject"] as? TreeNode else { return }
+        if let path = node.url?.path { expandedPaths.remove(path) }
+        cancelLoads(node)
+        node.children = nil
+        onStateChange?()
+    }
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let node = item as? TreeNode else { return nil }
         let cell = NSTableCellView(); let label = NSTextField(labelWithString: node.title + (node.unavailable == nil ? "" : "（不可用）"))

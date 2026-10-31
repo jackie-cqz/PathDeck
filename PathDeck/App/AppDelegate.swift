@@ -14,6 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
     private var smokeFixture: URL?
     private var preferences: PreferencesController?
+    private var workspaceTimer: Timer?
+    private var isRestoringWorkspace = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = false
@@ -24,12 +26,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 do { self.smokeFixture = try ApplicationSmokeCheck.makeFixture() }
                 catch { print("Cannot prepare test fixture: \(error)"); exit(1) }
             }
-            let url = self.smokeFixture?.appendingPathComponent(".settings/preferences.json") ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("PathDeck/preferences.json")
+            let url = RuntimeContext.testPreferencesURL ?? self.smokeFixture?.appendingPathComponent(".settings/preferences.json") ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("PathDeck/preferences.json")
             let preferences = PreferencesController(store: PreferencesStore(url: url))
             await preferences.load(migrateLegacy: !RuntimeContext.isTesting)
             self.preferences = preferences
-            self.showMainWindow()
+            let startupWorkspace = preferences.value.workspace
+            if let workspace = startupWorkspace, !workspace.groups.isEmpty {
+                _ = await self.restoreWorkspace(workspace)
+            } else { self.showMainWindow() }
+            self.workspaceTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in Task { @MainActor [weak self] in self?.captureWorkspace() } }
             NSApplication.shared.activate()
+            if CommandLine.arguments.contains("--workspace-save-test"), let root = self.smokeFixture {
+                let checks = await WorkspaceRestartCheck.prepare(app: self, root: root)
+                let passed = checks.values.allSatisfy { $0 }
+                if let data = try? JSONSerialization.data(withJSONObject: ["passed": passed, "checks": checks, "fixture": root.path], options: [.prettyPrinted, .sortedKeys]) { print(String(decoding: data, as: UTF8.self)) }
+                fflush(stdout); exit(passed ? 0 : 1)
+            }
+            if CommandLine.arguments.contains("--workspace-load-test") {
+                let checks = WorkspaceRestartCheck.verify(app: self, saved: startupWorkspace)
+                let passed = checks.values.allSatisfy { $0 }
+                if let data = try? JSONSerialization.data(withJSONObject: ["passed": passed, "checks": checks], options: [.prettyPrinted, .sortedKeys]) { print(String(decoding: data, as: UTF8.self)) }
+                await self.saveWorkspace(); if let root = self.smokeFixture { try? FileManager.default.removeItem(at: root) }
+                fflush(stdout); exit(passed ? 0 : 1)
+            }
             if CommandLine.arguments.contains("--smoke-test") {
                 guard let window = self.mainWindowController?.window, let fixture = self.smokeFixture else {
                     print("PathDeck smoke test: missing window")
@@ -42,6 +61,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             }
             if CommandLine.arguments.contains("--terminal-test"), let browser = self.browser, let fixture = self.smokeFixture {
                 await TerminalCheck.run(browser: browser, fixture: fixture)
+            }
+            if CommandLine.arguments.contains("--continuity-test"), let browser = self.browser, let fixture = self.smokeFixture {
+                await browser.waitForNavigation()
+                let checks = await ContinuityCheck.run(browser: browser, fixture: fixture)
+                let passed = checks.values.allSatisfy { $0 }
+                if let data = try? JSONSerialization.data(withJSONObject: ["passed": passed, "checks": checks], options: [.prettyPrinted, .sortedKeys]) { print(String(decoding: data, as: UTF8.self)) }
+                browser.stopMonitoring(); await preferences.flush(); try? FileManager.default.removeItem(at: fixture)
+                fflush(stdout); exit(passed ? 0 : 1)
+            }
+            if CommandLine.arguments.contains("--drag-test"), let browser = self.browser, let fixture = self.smokeFixture {
+                await browser.waitForNavigation()
+                let checks = await DragDropCheck.run(browser: browser, fixture: fixture)
+                let passed = checks.values.allSatisfy { $0 }
+                if let data = try? JSONSerialization.data(withJSONObject: ["passed": passed, "checks": checks], options: [.prettyPrinted, .sortedKeys]) { print(String(decoding: data, as: UTF8.self)) }
+                browser.stopMonitoring(); await preferences.flush(); try? FileManager.default.removeItem(at: fixture)
+                fflush(stdout); exit(passed ? 0 : 1)
             }
             if CommandLine.arguments.contains("--interaction-test"), let browser = self.browser, let fixture = self.smokeFixture {
                 await browser.waitForNavigation()
@@ -64,6 +99,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     private var browser: BrowserViewController? { mainWindowController?.browser }
     func applicationDidBecomeActive(_ notification: Notification) { browser?.applicationActivated() }
+    @objc func undo(_ sender: Any?) {
+        if let editor = NSApp.keyWindow?.firstResponder as? NSTextView {
+            // NSTextView exposes its undo manager, not a public undo: action.
+            // Sending undo: through that responder can route back to this delegate.
+            if editor.undoManager?.canUndo == true { editor.undoManager?.undo() }
+        }
+        else { browser?.undo(sender) }
+    }
     @objc func editLocation(_ sender: Any?) { browser?.editLocation(sender) }
     @objc func focusFilter(_ sender: Any?) { browser?.focusFilter(sender) }
     @objc func openCurrentTerminal(_ sender: Any?) { browser?.openCurrentTerminal(sender) }
@@ -120,12 +163,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         Task { [weak self] in
             if let self, let browser = self.browser { self.preferences?.value.remember(browser.session.currentDirectory) }
             self?.mainWindowController?.captureWindow()
+            self?.captureWorkspace()
             await self?.preferences?.flush()
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
     }
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(undo(_:)), let editor = NSApp.keyWindow?.firstResponder as? NSTextView {
+            item.title = editor.undoManager?.undoMenuItemTitle ?? "撤销"; return editor.undoManager?.canUndo == true
+        }
         if item.action == #selector(newWindow(_:)) || item.action == #selector(showMainWindow(_:)) { return preferences != nil }
         if item.action == #selector(showFileTasks(_:)) { return true }
         if item.action == #selector(toggleCompactList(_:)) { item.state = preferences?.value.compactList == true ? .on : .off; return browser != nil }
@@ -147,13 +194,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         mainWindowController?.window?.makeKeyAndOrderFront(sender)
         mainWindowController?.window?.makeMain()
         browser?.resumeMonitoring()
+        captureWorkspace()
     }
 
-    @discardableResult func makeWindow(at url: URL, tabOf origin: MainWindowController? = nil) -> MainWindowController? {
+    @discardableResult func makeWindow(at url: URL, tabOf origin: MainWindowController? = nil, pageState: BrowserPageSnapshot? = nil) -> MainWindowController? {
         guard let preferences else { return nil }
         let session = BrowserSession(initialDirectory: url)
         session.sort = preferences.value.sort; session.showHidden = preferences.value.showHidden
-        let controller = MainWindowController(session: session, preferences: preferences, actionContext: actionContext)
+        let controller = MainWindowController(session: session, preferences: preferences, actionContext: actionContext, pageState: pageState)
         windowControllers.append(controller)
         controller.onActivate = { [weak self, weak controller] in
             guard let self, let controller else { return }; self.lastActive = controller
@@ -164,6 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             self.windowControllers.removeAll { $0 === controller }
             if self.lastActive === controller { self.lastActive = self.windowControllers.last }
             if self.windowControllers.isEmpty { self.closedWindow = controller }
+            self.captureWorkspace()
         }
         controller.onNewTab = { [weak self, weak controller] in
             guard let controller else { return }; _ = self?.makeWindow(at: controller.browser.session.currentDirectory, tabOf: controller)
@@ -192,6 +241,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         lastActive = controller
         return controller
     }
+    func captureWorkspace() {
+        guard !isRestoringWorkspace, let preferences else { return }
+        let snapshot = WorkspaceController.capture(windowControllers, active: mainWindowController)
+        if preferences.value.workspace != snapshot { preferences.value.workspace = snapshot; preferences.changed() }
+    }
+    func saveWorkspace() async { captureWorkspace(); await preferences?.flush() }
+    @discardableResult func restoreWorkspace(_ source: WorkspaceSnapshot) async -> [MainWindowController] {
+        guard let snapshot = source.sanitized() else { return [] }
+        isRestoringWorkspace = true
+        defer { isRestoringWorkspace = false; captureWorkspace() }
+        var all: [MainWindowController] = [], selected: [MainWindowController] = []
+        for group in snapshot.groups {
+            var pages: [MainWindowController] = []
+            for state in group.pages {
+                if let controller = makeWindow(at: URL(fileURLWithPath: state.directory, isDirectory: true), tabOf: pages.last, pageState: state) { pages.append(controller); all.append(controller) }
+            }
+            for page in pages { await page.browser.waitForNavigation() }
+            if let page = pages.indices.contains(group.selectedIndex) ? pages[group.selectedIndex] : pages.first {
+                if let frame = group.frame { page.applyPlacement(frame) }
+                page.window?.tabGroup?.selectedWindow = page.window; selected.append(page)
+            }
+        }
+        if selected.indices.contains(snapshot.activeGroup), let window = selected[snapshot.activeGroup].window { window.makeKeyAndOrderFront(nil); window.makeMain(); lastActive = selected[snapshot.activeGroup] }
+        return all
+    }
+    func applicationWillTerminate(_ notification: Notification) { workspaceTimer?.invalidate() }
     @objc func newWindow(_ sender: Any?) { _ = makeWindow(at: browser?.session.currentDirectory ?? FileManager.default.homeDirectoryForCurrentUser) }
     @objc func newTab(_ sender: Any?) { _ = makeWindow(at: browser?.session.currentDirectory ?? FileManager.default.homeDirectoryForCurrentUser, tabOf: mainWindowController) }
     @objc func nextTab(_ sender: Any?) { mainWindowController?.window?.selectNextTab(sender) }

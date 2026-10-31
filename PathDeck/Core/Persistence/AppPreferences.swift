@@ -20,6 +20,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
     public var showHidden = false
     public var windowsFriendly = true
     public var compactList: Bool?
+    public var workspace: WorkspaceSnapshot?
     public var favorites: [String]?
     public var favoriteNames: [String: String]?
     public var expandedDirectories: [String] = []
@@ -49,6 +50,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         }
         result.expandedDirectories = paths(expandedDirectories, limit: 128)
         result.recentDirectories = paths(recentDirectories, limit: 50)
+        result.workspace = workspace?.sanitized()
         return result
     }
     public mutating func remember(_ url: URL) {
@@ -77,7 +79,7 @@ public final class PreferencesStore: @unchecked Sendable {
                 }
                 do {
                     let data = try Data(contentsOf: self.url)
-                    guard data.count <= 1_048_576 else { throw CocoaError(.fileReadCorruptFile) }
+                    guard data.count <= 16_777_216 else { throw CocoaError(.fileReadCorruptFile) }
                     let preferences = try JSONDecoder().decode(AppPreferences.self, from: data)
                     guard preferences.schemaVersion == 1 else { throw CocoaError(.fileReadCorruptFile) }
                     continuation.resume(returning: PreferencesLoadResult(preferences: preferences.sanitized(), notice: nil, missing: false))

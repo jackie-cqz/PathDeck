@@ -27,7 +27,7 @@ public struct FileReference: Codable, Equatable, Sendable {
 }
 
 public enum FileOperationKind: String, Codable, Sendable {
-    case newFolder, newTextFile, rename, copy, move, trash
+    case newFolder, newTextFile, rename, copy, move, trash, undo
     public var title: String {
         switch self {
         case .newFolder: "新建文件夹"
@@ -36,6 +36,7 @@ public enum FileOperationKind: String, Codable, Sendable {
         case .copy: "复制"
         case .move: "移动"
         case .trash: "移入废纸篓"
+        case .undo: "撤销"
         }
     }
 }
@@ -45,8 +46,15 @@ public struct FileOperationRequest: Codable, Sendable {
     public let sources: [FileReference]
     public let destination: FileReference?
     public let name: String?
-    public init(kind: FileOperationKind, sources: [FileReference] = [], destination: FileReference? = nil, name: String? = nil) {
+    public let undoSteps: [FileUndoStep]?
+    public let undoOf: UUID?
+    public init(kind: FileOperationKind, sources: [FileReference] = [], destination: FileReference? = nil, name: String? = nil, undoSteps: [FileUndoStep]? = nil, undoOf: UUID? = nil) {
         id = UUID(); self.kind = kind; self.sources = sources; self.destination = destination; self.name = name
+        self.undoSteps = undoSteps; self.undoOf = undoOf
+    }
+    init(inverseOf request: FileOperationRequest, kind: FileOperationKind, source: FileReference, destination: FileReference, name: String) {
+        id = request.id; self.kind = kind; sources = [source]; self.destination = destination; self.name = name
+        undoSteps = nil; undoOf = request.undoOf
     }
 }
 public enum FileOperationState: String, Codable, Sendable {
@@ -74,8 +82,10 @@ public struct FileOperationResult: Codable, Sendable {
     public let destination: URL?
     public let outcome: Outcome
     public let message: String
-    public init(source: URL?, destination: URL?, outcome: Outcome, message: String = "") {
+    public let undoStep: FileUndoStep?
+    public init(source: URL?, destination: URL?, outcome: Outcome, message: String = "", undoStep: FileUndoStep? = nil) {
         self.source = source; self.destination = destination; self.outcome = outcome; self.message = message
+        self.undoStep = undoStep
     }
 }
 public struct FileOperationRecord: Codable, Sendable, Identifiable {

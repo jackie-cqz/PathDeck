@@ -32,7 +32,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
     var onClose: (() -> Void)?
     var onNewTab: (() -> Void)?
     var browser: BrowserViewController { window!.contentViewController as! BrowserViewController }
-    init(session: BrowserSession, preferences: PreferencesController, actionContext: FileActionContext? = nil) {
+    init(session: BrowserSession, preferences: PreferencesController, actionContext: FileActionContext? = nil, pageState: BrowserPageSnapshot? = nil) {
         self.preferences = preferences
         let window = BrowserWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
@@ -47,7 +47,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.autorecalculatesKeyViewLoop = false
         window.tabbingIdentifier = "PathDeck.Browser"; window.tabbingMode = .preferred
-        window.contentViewController = BrowserViewController(session: session, preferences: preferences, actionContext: actionContext)
+        window.contentViewController = BrowserViewController(session: session, preferences: preferences, actionContext: actionContext, pageState: pageState)
         // Assigning a zero-frame programmatic view controller can shrink the
         // window to its minimum size. Set the intended content size afterwards.
         let screen = NSScreen.main?.visibleFrame.size ?? NSSize(width: 1280, height: 900)
@@ -65,6 +65,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         }
         super.init(window: window)
         window.delegate = self
+        window.tab.accessoryView = TabDropView(browser: browser, window: window)
     }
 
     @available(*, unavailable)

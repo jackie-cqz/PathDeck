@@ -33,6 +33,7 @@ final class FileActionController {
     var canWrite: Bool { browser?.isNavigating == false && browser?.session.contentState == .loaded && browser?.session.directoryReference != nil }
     var summary: String {
         if let active = operations.records.first(where: { !$0.state.isTerminal }) { return "\(active.request.kind.title)：\(active.state.title) · \(active.results.count)/\(active.total)" }
+        if context.isPreparing { return "正在准备拖放任务…" }
         return lastMessage
     }
     @discardableResult func create(_ kind: FileOperationKind, destination explicit: FileReference? = nil) -> UUID? {

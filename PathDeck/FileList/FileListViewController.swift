@@ -4,7 +4,8 @@ import PathDeckCore
 #endif
 
 @MainActor
-private final class BrowserTable: NSTableView {
+private final class BrowserTable: NSTableView, FileDragSource {
+    let fileDragState = FileDragState()
     var buildMenu: ((Int) -> NSMenu?)?
     var openSelection: (() -> Void)?
     var onBack: (() -> Void)?
@@ -46,6 +47,14 @@ private final class BrowserTable: NSTableView {
 @MainActor private final class FileListMessage: NSTextField {
     nonisolated override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
+@MainActor private final class FileDropScrollView: NSScrollView {
+    var validate: ((any NSDraggingInfo) -> NSDragOperation)?
+    var accept: ((any NSDraggingInfo) -> Bool)?
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation { validate?(sender) ?? [] }
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation { validate?(sender) ?? [] }
+    override func prepareForDragOperation(_ sender: any NSDraggingInfo) -> Bool { !(validate?(sender) ?? []).isEmpty }
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool { accept?(sender) ?? false }
+}
 
 extension BrowserTable: NSMenuItemValidation {
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
@@ -55,9 +64,12 @@ extension BrowserTable: NSMenuItemValidation {
 }
 
 @MainActor
-final class FileListViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSMenuDelegate {
+final class FileListViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSMenuDelegate, FileDragSource {
     private let table = BrowserTable()
     private let message = FileListMessage(wrappingLabelWithString: "正在读取目录…")
+    var fileDragState: FileDragState { table.fileDragState }
+    var drops: FileDropController?
+    private var validatedDrop: (sequence: Int, row: Int, destination: FileReference)?
     private var items: [FileItem] = []
     private var currentDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
     private var applying = false
@@ -102,7 +114,12 @@ final class FileListViewController: NSViewController, NSTableViewDataSource, NST
 
     override func loadView() {
         view = NSView()
-        let scroll = NSScrollView()
+        let scroll = FileDropScrollView()
+        scroll.registerForDraggedTypes([.fileURL]); table.registerForDraggedTypes([.fileURL])
+        table.setDraggingSourceOperationMask([.copy, .move], forLocal: true)
+        table.setDraggingSourceOperationMask(.copy, forLocal: false)
+        scroll.validate = { [weak self] info in self?.validateDrop(info, row: -1, operation: .on) ?? [] }
+        scroll.accept = { [weak self] info in self?.acceptDrop(info, row: -1) ?? false }
         scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true; scroll.autohidesScrollers = true
         table.style = .plain; table.rowHeight = compact ? 24 : 30
         table.usesAlternatingRowBackgroundColors = true
@@ -148,6 +165,7 @@ final class FileListViewController: NSViewController, NSTableViewDataSource, NST
         loadViewIfNeeded()
         applying = true
         let changed = items != session.visibleItems || currentDirectory.path != session.currentDirectory.path
+        if changed { fileDragState.invalidateOffers() }
         if !changed && isRenaming { applying = false; return }
         items = session.visibleItems; currentDirectory = session.currentDirectory
         directoryReference = session.directoryReference
@@ -208,6 +226,38 @@ final class FileListViewController: NSViewController, NSTableViewDataSource, NST
     func contextMenu(at row: Int) -> NSMenu? { table.contextMenu(at: row) }
     var selectedURLs: Set<URL> { Set(table.selectedRowIndexes.compactMap { items.indices.contains($0) ? items[$0].url : nil }) }
     var selectedReferences: [FileReference] { table.selectedRowIndexes.compactMap { items.indices.contains($0) ? items[$0].reference : nil } }
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
+        guard table.isEnabled, !isRenaming, drops?.canStart == true, items.indices.contains(row) else { return nil }
+        return fileDragState.writer(for: items[row].reference)
+    }
+    func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, willBeginAt screenPoint: NSPoint, forRowIndexes rowIndexes: IndexSet) {
+        session.draggingFormation = .pile; fileDragState.begin(pasteboard: session.draggingPasteboard)
+    }
+    func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) { fileDragState.end() }
+    func tableView(_ tableView: NSTableView, validateDrop info: any NSDraggingInfo, proposedRow row: Int, proposedDropOperation operation: NSTableView.DropOperation) -> NSDragOperation {
+        validateDrop(info, row: row, operation: operation)
+    }
+    func tableView(_ tableView: NSTableView, acceptDrop info: any NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation) -> Bool { acceptDrop(info, row: row) }
+    private func validateDrop(_ info: any NSDraggingInfo, row: Int, operation: NSTableView.DropOperation) -> NSDragOperation {
+        validatedDrop = nil
+        guard table.isEnabled, !isRenaming, let drops else { return [] }
+        let target: FileReference?
+        let normalizedRow: Int
+        if operation == .on, items.indices.contains(row) {
+            guard items[row].kind == .directory else { return [] }
+            target = items[row].reference; normalizedRow = row
+        } else { target = directoryReference; normalizedRow = -1 }
+        guard let target else { return [] }
+        let result = drops.validate(info, destination: target)
+        if !result.isEmpty { table.setDropRow(normalizedRow, dropOperation: .on); validatedDrop = (info.draggingSequenceNumber, normalizedRow, target) }
+        return result
+    }
+    private func acceptDrop(_ info: any NSDraggingInfo, row: Int) -> Bool {
+        guard let validatedDrop, validatedDrop.sequence == info.draggingSequenceNumber, validatedDrop.row == row else { return false }
+        let current = row == -1 ? directoryReference : (items.indices.contains(row) && items[row].kind == .directory ? items[row].reference : nil)
+        guard current == validatedDrop.destination else { return false }
+        return drops?.accept(info, destination: validatedDrop.destination) ?? false
+    }
     func setCutURLs(_ urls: Set<URL>) {
         cutURLs = urls
         for row in table.rows(in: table.visibleRect).location..<NSMaxRange(table.rows(in: table.visibleRect)) where items.indices.contains(row) {

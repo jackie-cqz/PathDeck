@@ -55,7 +55,7 @@ public final class FileOperationService {
                     record.artifacts = step.artifacts
                     if let result = step.result { record.results.append(result); break }
                     guard let conflict = step.conflict else { break }
-                    if record.request.kind == .rename {
+                    if record.request.kind == .rename || record.request.kind == .undo {
                         record.results.append(FileOperationResult(source: source?.url, destination: conflict, outcome: .failed, message: "原位置名称已存在，未覆盖；请处理占用后重试。")); break
                     }
                     record.state = .waitingForDecision; update(record)

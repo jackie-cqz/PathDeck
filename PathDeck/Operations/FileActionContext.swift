@@ -10,10 +10,13 @@ final class FileActionContext {
     let operations: FileOperationService
     let clipboard: ClipboardService
     let panel: OperationsWindowController
+    let undoHistory = FileUndoHistory()
     private var observers: [Observer] = []
     private var owners: [UUID: FileActionController] = [:]
     private var monitoring: Set<ObjectIdentifier> = []
-    var isBusy: Bool { operations.isBusy }
+    private var preparations: [UUID: OperationCancellation] = [:]
+    var isBusy: Bool { operations.isBusy || !preparations.isEmpty }
+    var isPreparing: Bool { !preparations.isEmpty }
     var onIdle: (() -> Void)?
     private var controllers: [FileActionController] { observers.compactMap(\.value) }
     var presentationWindow: NSWindow? {
@@ -33,6 +36,7 @@ final class FileActionContext {
         }
         operations.onComplete = { [weak self] record in
             guard let self else { return }
+            self.undoHistory.consume(record)
             let owner = self.owners.removeValue(forKey: record.id)
             owner?.receive(record)
             for controller in self.controllers where controller !== owner { controller.externalCompletion(record) }
@@ -43,6 +47,7 @@ final class FileActionContext {
             guard let self else { return }
             do {
                 try await self.operations.recover()
+                self.undoHistory.recover(self.operations.records)
                 if self.operations.records.contains(where: { $0.state == .interruptedUnknown || !$0.artifacts.isEmpty }) { self.panel.showWindow(nil) }
             } catch { self.controllers.forEach { $0.lastMessage = "无法读取任务记录：\(error.localizedDescription)"; $0.onStatusChange?() } }
         }
@@ -55,8 +60,18 @@ final class FileActionContext {
     func submit(_ request: FileOperationRequest, owner: FileActionController) -> UUID {
         let id = operations.submit(request); owners[id] = owner; return id
     }
+    @discardableResult func undo(owner: FileActionController) -> UUID? {
+        guard !isBusy, let request = undoHistory.request() else { return nil }
+        return submit(request, owner: owner)
+    }
+    func beginPreparation() -> (UUID, OperationCancellation) {
+        let id = UUID(), token = OperationCancellation(); preparations[id] = token
+        controllers.forEach { $0.onStatusChange?() }; return (id, token)
+    }
+    func endPreparation(_ id: UUID) { preparations[id] = nil; controllers.forEach { $0.onStatusChange?() }; reportIdle() }
     private func reportIdle() { guard !isBusy else { return }; controllers.forEach { $0.onIdle?() }; onIdle?() }
     func cancelAll() {
+        preparations.values.forEach { $0.cancel() }
         for record in operations.records where !record.state.isTerminal { owners[record.id]?.cancel(record.id) }
     }
 }

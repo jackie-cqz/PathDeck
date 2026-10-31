@@ -35,7 +35,7 @@ enum AppMenu {
         append(file, to: main)
 
         let edit = NSMenu(title: "编辑")
-        edit.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "撤销", action: #selector(AppDelegate.undo(_:)), keyEquivalent: "z").target = commandTarget
         let redo = edit.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "z")
         redo.keyEquivalentModifierMask = [.command, .shift]
         edit.addItem(.separator())
