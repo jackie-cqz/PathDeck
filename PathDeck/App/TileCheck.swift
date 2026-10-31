@@ -65,6 +65,7 @@ import PathDeckCore
             checks["tilesSupportInlineRename"] = browser.fileList.isRenaming && controller.window?.firstResponder is NSTextView
             (controller.window?.firstResponder as? NSTextView)?.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
             checks["tileRenameEscapeDoesNotWrite"] = !browser.fileList.isRenaming && FileManager.default.fileExists(atPath: image.path)
+            checks["tileRenameEscapeRestoresLabelInteraction"] = (collection.item(at: IndexPath(item: index, section: 0)) as? FileTileItem)?.name.isSelectable == false
             browser.actions.beginRename(browser.fileList.selectedReferences)
             let count = browser.actions.operations.records.count
             if let editor = controller.window?.firstResponder as? NSTextView {

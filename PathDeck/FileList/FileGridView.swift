@@ -77,6 +77,7 @@ final class FileTileItem: NSCollectionViewItem {
     func configure(_ item: FileItem, fallback: NSImage, cut: Bool) {
         loadViewIfNeeded(); operation?.cancel(); operation = nil
         key = FileThumbnailCache.key(item); hasThumbnail = false; thumbnail.image = fallback
+        name.isEditable = false; name.isSelectable = false
         thumbnail.contentTintColor = item.kind == .directory ? BrowserAppearance.mint : nil
         name.stringValue = item.displayName; name.toolTip = item.url.path; view.alphaValue = cut ? 0.45 : 1
         view.setAccessibilityLabel(item.displayName); view.setAccessibilityHelp("\(item.typeDescription)，\(item.url.path)")
