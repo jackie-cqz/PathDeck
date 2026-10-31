@@ -1,13 +1,16 @@
-# PathDeck Core
+# PathDeck
 
-The Swift core of PathDeck, a native macOS file manager with clear paths and familiar controls.
+A native macOS file manager with an editable path bar, familiar file controls, independent windows, and native tabs. Built with Swift and AppKit.
 
-The package provides path parsing, asynchronous directory reading, navigation history, filtering and sorting, persistent preferences, directory monitoring, and identity-checked file operations.
+Use breadcrumbs or enter a path, pin folders, filter the current directory, create and rename files, copy and cut between windows, and move items to Trash. Open folders in Terminal or files in VS Code, preview with Space, and inspect file properties.
 
-## Build and test
+## Build and run
 
-Requires macOS and a Swift 6 toolchain.
+Requires macOS, a Swift 6 toolchain with the macOS SDK, and Python 3.
 
 ```bash
-bash scripts/swift.sh test
+bash scripts/build-app.sh release
+open build/release/PathDeck.app
 ```
+
+Or open PathDeck.xcodeproj and run the PathDeck scheme. Core tests: `bash scripts/swift.sh test`.
