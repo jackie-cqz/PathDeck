@@ -1,0 +1,21 @@
+.build/
+.swiftpm/
+build/
+.DS_Store
+xcuserdata/
+*.xcuserstate
+work/
+DerivedData/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+*.p12
+*.p8
+*.key
+
+# Local agent working notes; product specifications and validation stay in docs/.
+/notes.md
+/task_plan.md
+
